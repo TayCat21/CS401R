@@ -34,11 +34,19 @@ def load_accounts(path="nws_bluesky_handles.csv"):
                                  handles.append(value)
            return handles
 
+import time
 
-def fetch_posts(handle, limit=50):
+def fetch_posts(handle, limit=50, retries=2):
     """Return the account's latest posts as a list of row dicts."""
-    resp = requests.get(API, params={"actor": handle, "limit": limit}, timeout=30)
-    resp.raise_for_status()
+    for attempt in range(retries+1):
+        try:
+            resp = requests.get(API, params={"actor": handle, "limit": limit}, timeout=30)
+            resp.raise_for_status()
+            break
+        except requests.RequestException:
+            if attempt == retries:
+                raise
+            time.sleep(2) # pause before retry
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows = []
     for item in resp.json().get("feed", []):
@@ -87,6 +95,7 @@ def main():
                 added += 1
         except requests.RequestException as e:
             print(f"Skipping {handle}: {e}")  # one bad account shouldn't stop the run
+        time.sleep(0.5) # pause to help API
 
     wb.save(OUTFILE)
     print(f"Added {added} new posts. Total rows: {ws.max_row - 1}")

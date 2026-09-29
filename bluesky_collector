@@ -30,7 +30,7 @@ def load_accounts(path="nws_bluesky_handles.csv"):
                                  if not value:
                                             continue
                                  if value.startswith("http"):
-                                            value = urlparse(value).path.rsplit("\", 1)[-1]
+                                            value = urlparse(value).path.rsplit("/", 1)[-1]
                                  handles.append(value)
            return handles
 
@@ -43,7 +43,7 @@ def fetch_posts(handle, limit=50):
     rows = []
     for item in resp.json().get("feed", []):
         post = item["post"]
-        if post["author"]["handle"] != handle:  # skip reposts of other accounts
+        if post["author"]["handle"].lower() != handle.lower():  # skip reposts of other accounts
             continue
         rows.append({
             "collected_at": now,

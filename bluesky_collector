@@ -19,7 +19,7 @@ COLUMNS = ["collected_at", "account", "post_id", "post_time",
            "text", "likes", "reposts", "replies"]
 
 # Replace with your 122 handles (or load them from a text/CSV file)
-ACCOUNTS = ["nws.noaa.gov"]
+ACCOUNTS = ["ABR.nws-bot.us"]
 
 
 def fetch_posts(handle, limit=50):

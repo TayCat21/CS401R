@@ -1,0 +1,102 @@
+"""
+One-off pull of Bluesky profile stats (followers, following, post count, etc.)
+for every account in the handles CSV. Writes to its own file, separate from
+the daily post collector.
+
+Setup:  pip install requests openpyxl
+Run:    python bluesky_profiles.py
+
+Each run appends a dated snapshot, so running it again later gives you
+follower counts over time instead of overwriting the old numbers.
+"""
+import csv
+import os
+import time
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+
+import requests
+from openpyxl import Workbook, load_workbook
+
+API = "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfiles"
+HANDLES_CSV = "nws_bluesky_handles.csv"
+OUTFILE = "bluesky_profiles.xlsx"
+BATCH_SIZE = 25  # the API accepts at most 25 accounts per request
+COLUMNS = ["collected_at", "handle", "did", "display_name", "followers",
+           "following", "posts_count", "created_at", "description"]
+
+
+def load_accounts(path=HANDLES_CSV):
+    handles = []
+    with open(path, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            value = row["handle"].strip()
+            if not value:
+                continue
+            if value.startswith("http"):
+                value = urlparse(value).path.rsplit("/", 1)[-1]
+            handles.append(value)
+    return handles
+
+
+def fetch_batch(handles, retries=2):
+    """Fetch up to 25 profiles in one request, retrying on timeouts."""
+    for attempt in range(retries + 1):
+        try:
+            resp = requests.get(API, params={"actors": handles}, timeout=30)
+            resp.raise_for_status()
+            return resp.json().get("profiles", [])
+        except requests.RequestException as e:
+            if attempt == retries:
+                print(f"Batch failed after {retries + 1} tries: {e}")
+                return []
+            time.sleep(2)
+
+
+def load_or_create(path):
+    if os.path.exists(path):
+        wb = load_workbook(path)
+        ws = wb.active
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "bluesky_profiles"
+        ws.append(COLUMNS)
+    return wb, ws
+
+
+def main():
+    handles = load_accounts()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    wb, ws = load_or_create(OUTFILE)
+
+    found = set()
+    for i in range(0, len(handles), BATCH_SIZE):
+        batch = handles[i:i + BATCH_SIZE]
+        for p in fetch_batch(batch):
+            found.add(p["handle"].lower())
+            ws.append([
+                now,
+                p["handle"],
+                p["did"],
+                p.get("displayName", ""),
+                p.get("followersCount", 0),
+                p.get("followsCount", 0),
+                p.get("postsCount", 0),
+                p.get("createdAt", ""),
+                (p.get("description") or "").replace("\n", " "),
+            ])
+        time.sleep(0.5)
+
+    wb.save(OUTFILE)
+
+    missing = [h for h in handles if h.lower() not in found]
+    print(f"Saved {len(found)} of {len(handles)} profiles to {OUTFILE}")
+    if missing:
+        print("Not returned (typo, renamed, or request failed):")
+        for h in missing:
+            print("  ", h)
+
+
+if __name__ == "__main__":
+    main()

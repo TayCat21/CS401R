@@ -1,0 +1,366 @@
+"""
+Code Bluesky posts into message categories, keep the coded file up to date,
+and refresh the charts + SUMMARY.md that show the key results on GitHub.
+
+Input : bluesky_posts.xlsx  (output of bluesky_collector.py, never modified)
+Output: bluesky_posts_coded.xlsx   coded posts + summary sheets
+        SUMMARY.md                 key numbers and charts (renders on GitHub)
+        charts/*.png               the charts embedded in SUMMARY.md
+
+Each run only codes posts whose post_id is not already in the coded file, so
+you can run it every day after the collector. If you change the coding rules
+and want every post recoded, run:  python code_posts.py --recode
+
+Added columns on the "coded_posts" sheet:
+  station         station code from the handle (e.g. ABR)
+  message_type    what kind of message it is (see TYPE_NOTES below)
+  broad_group     message_type collapsed into 4 bigger groups
+  hazard_type     weather hazard the message is about (blank if not applicable)
+  alert_level     Warning / Watch / Advisory / Statement / Outlook ... (from the product name)
+  urgent_flag     True if the post starts with the siren emoji used for warnings
+  part_num / part_total / is_followup_part
+                  multi-part alerts are posted as "(1/3)", "(2/3)" ...; filter on
+                  is_followup_part == False to count each message once instead of each post
+
+Setup:  pip install pandas openpyxl matplotlib
+Run:    python code_posts.py
+"""
+import argparse
+import os
+import re
+from datetime import datetime, timezone
+
+import matplotlib
+matplotlib.use("Agg")  # draw to files, no window needed
+import matplotlib.pyplot as plt
+import pandas as pd
+
+INFILE = "bluesky_posts.xlsx"
+OUTFILE = "bluesky_posts_coded.xlsx"
+SUMMARY_MD = "SUMMARY.md"
+CHART_DIR = "charts"
+
+# ----------------------------------------------------------------------------
+# Hazard keywords (first match wins, so order matters)
+# ----------------------------------------------------------------------------
+HAZARDS = [
+    ("Tropical", r"hurricane|tropical|storm surge|typhoon"),
+    ("Tornado", r"tornado|funnel|waterspout"),
+    ("Severe thunderstorm", r"severe thunderstorm|severe weather|slight risk|marginal risk|enhanced risk|"
+                            r"moderate risk|high risk|convective|thunderstorm|tstm|hail"),
+    ("Flood / heavy rain", r"flash flood|flood|hydrolog|river|stream|rain|precip"),
+    ("Marine", r"small craft|gale|special marine|marine|hazardous seas|rough bar|low water|"
+               r"storm warning"),
+    ("Coastal / surf", r"rip current|beach hazard|high surf|coastal|surf|tsunami"),
+    ("Winter", r"winter|snow|blizzard|ice storm|freezing rain|wind chill|lake effect|sleet|avalanche"),
+    ("Cold / frost / freeze", r"frost|freeze|extreme cold|cold"),
+    ("Heat", r"heat"),
+    ("Fire weather", r"red flag|fire"),
+    ("Wind", r"wind|wnd"),
+    ("Fog / visibility / dust", r"fog|smoke|dust|visibility"),
+    ("Air quality", r"air quality|ozone|particulate"),
+    ("Earthquake / volcano", r"earthquake|volcan|ash"),
+]
+
+LEVELS = [
+    ("Warning", r"\bwarning\b"), ("Watch", r"\bwatch\b"), ("Advisory", r"\badvisory\b"),
+    ("Emergency", r"\bemergency\b"), ("Statement", r"\bstatement\b"),
+    ("Outlook", r"\boutlook\b"), ("Alert", r"\balert\b"),
+]
+
+UPDATE_VERBS = ("updates|expires|cancels|extends|continues|corrects|reissues|upgrades|"
+                "downgrades|expands|reduces|adds|removes|replaces|renews")
+
+# ----------------------------------------------------------------------------
+# Message types and the broad groups they roll up into
+# ----------------------------------------------------------------------------
+BROAD = {
+    "Warning / watch / advisory": "Alerts",
+    "Alert update or cancellation": "Alerts",
+    "Statement / short-term forecast": "Hazard information",
+    "Outlook / situational awareness": "Hazard information",
+    "Forecast discussion": "Routine products",
+    "Climate / records summary": "Routine products",
+    "Storm report / public information": "Reports of observed conditions",
+    "Other / uncoded": "Other",
+}
+
+
+def clean(s):
+    return re.sub(r"\s+", " ", str(s).replace("\\n", " ").replace("\n", " ")).strip()
+
+
+def first_match(pairs, text):
+    low = text.lower()
+    for name, pat in pairs:
+        if re.search(pat, low):
+            return name
+    return ""
+
+
+def split_post(text):
+    """Return (cleaned text without leading emoji, urgent flag, product name, is_update)."""
+    s = clean(text)
+    urgent = s.startswith("\U0001F6A8")  # siren emoji
+    s = re.sub(r"^[^\w\[]+", "", s)  # strip leading emoji/symbols
+
+    # "XXX <verb> <rest>" format (verb = issues / continues / cancels ...)
+    m = re.match(rf"^[A-Z]{{3,4}} (issues|{UPDATE_VERBS}) (.*)", s)
+    if m:
+        verb, rest = m.group(1), m.group(2)
+        product = re.split(r" valid | at | for | until | \(| \[|,|$", rest, maxsplit=1)[0]
+        return s, urgent, product.strip(), verb != "issues"
+
+    if re.match(r"^The .* has been (cancelled|extended|upgraded|expanded|downgraded|replaced)", s):
+        return s, urgent, s.split(" has been")[0].replace("The ", ""), True
+
+    # "<Product> issued <date> ..." format (no station prefix)
+    m = re.match(r"^(.+?) issued ", s)
+    if m:
+        return s, urgent, re.split(r" \[", m.group(1))[0].strip(), False
+
+    return s, urgent, "", False
+
+
+FIELD_REPORT = re.compile(r"\[[^\]]*, [A-Z]{2}\] .{0,60}?\breports?\b", re.I)
+
+
+def code_post(text):
+    s, urgent, product, is_update = split_post(text)
+    low = s[:220].lower()
+    plow = product.lower()
+
+    # --- routine products -------------------------------------------------
+    if "climate report" in low or re.search(r"record event report|regional weather summary", low):
+        return "Climate / records summary", "", "", urgent
+    if "area forecast discussion" in low or "(afd)" in low:
+        return "Forecast discussion", "", "", urgent
+
+    # --- reports of observed conditions -----------------------------------
+    if s.startswith("[Delayed Report]") or FIELD_REPORT.search(s[:160]) \
+            or re.search(r"public information statement|damage survey|local storm report|\(pns\)", low):
+        hz = first_match(HAZARDS, s.split("reports", 1)[-1][:80]) if "reports" in s[:160] \
+            else first_match(HAZARDS, s[:120])
+        return "Storm report / public information", hz, "", urgent
+
+    # --- outlooks / situational awareness ---------------------------------
+    if re.search(r"hazardous weather outlook|\(hwo\)|hydrologic outlook|storm prediction center|"
+                 r"weather prediction center|mesoscale|day \d (slight|marginal|enhanced|moderate|high)|"
+                 r"convective outlook|excessive rainfall|national hurricane center|"
+                 r"tropical cyclone discussion|grassland fire danger|fire danger|"
+                 r"hydrological discussion|avalanche", low):
+        return "Outlook / situational awareness", first_match(HAZARDS, s[:140]), "Outlook", urgent
+
+    hazard = first_match(HAZARDS, product or s[:140])
+    level = first_match(LEVELS, product)
+
+    # --- alert updates / cancellations ------------------------------------
+    if is_update:
+        return "Alert update or cancellation", first_match(HAZARDS, s[:140]) or hazard, level, urgent
+
+    # --- statements / short-term forecasts --------------------------------
+    if re.search(r"statement|short-term forecast|\(now\)", plow) and not re.search(r"warning|watch|advisory", plow):
+        return "Statement / short-term forecast", hazard, level or "Statement", urgent
+
+    # --- new warnings / watches / advisories ------------------------------
+    if re.search(r"\b(warning|watch|advisory|alert|emergency)\b", plow):
+        return "Warning / watch / advisory", hazard, level, urgent
+
+    if re.search(r"administrative message|free text message", plow):
+        return "Other / uncoded", "", "", urgent
+    if product:
+        return "Statement / short-term forecast", hazard, level, urgent
+    return "Other / uncoded", first_match(HAZARDS, s[:140]), "", urgent
+
+
+def part_info(text):
+    m = re.search(r"\((\d+)/(\d+)\)\s*$", clean(text))
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def add_coding(df):
+    """Add the coding columns to a dataframe of raw posts."""
+    df = df.copy()
+    coded = df["text"].map(code_post)
+    df["station"] = df["account"].str.split(".").str[0].str.upper()
+    df["message_type"] = [c[0] for c in coded]
+    df["broad_group"] = df["message_type"].map(BROAD)
+    df["hazard_type"] = [c[1] for c in coded]
+    df["alert_level"] = [c[2] for c in coded]
+    df["urgent_flag"] = [c[3] for c in coded]
+    parts = df["text"].map(part_info)
+    df["part_num"] = [p[0] for p in parts]
+    df["part_total"] = [p[1] for p in parts]
+    df["is_followup_part"] = df["part_num"].fillna(1) > 1
+    return df
+
+
+def load_coded_posts(recode):
+    """Return the existing coded posts (empty if first run or --recode)."""
+    if recode or not os.path.exists(OUTFILE):
+        return pd.DataFrame()
+    return pd.read_excel(OUTFILE, sheet_name="coded_posts")
+
+
+# ----------------------------------------------------------------------------
+# Charts
+# ----------------------------------------------------------------------------
+def save_chart(fig, name):
+    os.makedirs(CHART_DIR, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(os.path.join(CHART_DIR, name), dpi=130)
+    plt.close(fig)
+
+
+def make_charts(df):
+    # 1. Overall message types
+    counts = df["message_type"].value_counts().sort_values()
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.barh(counts.index, counts.values, color="#3b6ea5")
+    for i, v in enumerate(counts.values):
+        ax.text(v, i, f" {v:,} ({v / len(df) * 100:.0f}%)", va="center", fontsize=8)
+    ax.set_xlim(0, counts.max() * 1.25)
+    ax.set_title("What kinds of messages are being posted?")
+    ax.set_xlabel("Number of posts")
+    save_chart(fig, "message_types.png")
+
+    # 2. Posts per day by broad group
+    # The first collector run only grabbed each account's latest ~50 posts, so days
+    # before collection began are incomplete, and the newest collection day is still
+    # in progress. Chart only the days in between.
+    d = df.copy()
+    d["day"] = pd.to_datetime(d["post_time"], errors="coerce", utc=True).dt.date
+    collected = pd.to_datetime(d["collected_at"], errors="coerce", utc=True).dt.date
+    d = d[(d["day"] >= collected.min()) & (d["day"] < collected.max())]
+    daily = d.groupby(["day", "broad_group"]).size().unstack(fill_value=0)
+    fig, ax = plt.subplots(figsize=(9, 4))
+    daily.plot(kind="bar", stacked=True, ax=ax, width=0.9, colormap="tab10")
+    ax.set_title("Posts per day by message group (complete collection days only)")
+    ax.set_xlabel("")
+    ax.set_ylabel("Posts")
+    step = max(1, len(daily) // 12)
+    ax.set_xticks(range(0, len(daily), step))
+    ax.set_xticklabels([str(x) for x in daily.index[::step]], rotation=45, ha="right", fontsize=8)
+    ax.legend(fontsize=8, title="", loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=3)
+    save_chart(fig, "daily_posts.png")
+
+    # 3. Hazards in alerts
+    alerts = df[(df["broad_group"] == "Alerts") & (~df["is_followup_part"])]
+    hz = alerts["hazard_type"].replace("", "Unspecified").value_counts().sort_values()
+    if len(hz):
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        ax.barh(hz.index, hz.values, color="#c0504d")
+        ax.set_title("Hazards in warnings, watches, advisories and their updates")
+        ax.set_xlabel("Messages (multi-part follow-ups excluded)")
+        save_chart(fig, "alert_hazards.png")
+
+    # 4. Message mix for the 20 most active stations
+    top = df["station"].value_counts().head(20).index
+    mix = pd.crosstab(df[df["station"].isin(top)]["station"],
+                      df[df["station"].isin(top)]["broad_group"])
+    mix = mix.loc[mix.sum(axis=1).sort_values().index]
+    fig, ax = plt.subplots(figsize=(8, 6))
+    mix.plot(kind="barh", stacked=True, ax=ax, colormap="tab10", width=0.8)
+    ax.set_title("Message mix, 20 most active stations")
+    ax.set_xlabel("Posts")
+    ax.set_ylabel("")
+    ax.legend(fontsize=8, title="")
+    save_chart(fig, "station_mix.png")
+
+
+def write_summary_md(df):
+    first = pd.to_datetime(df["post_time"], errors="coerce", utc=True).min()
+    last = pd.to_datetime(df["post_time"], errors="coerce", utc=True).max()
+    overall = df["message_type"].value_counts()
+    lines = [
+        "# Bluesky emergency-services posts: coding summary",
+        "",
+        f"*Updated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC*",
+        "",
+        f"- **{len(df):,}** posts from **{df['station'].nunique()}** accounts",
+        f"- Posts dated **{first:%Y-%m-%d}** to **{last:%Y-%m-%d}**",
+        f"- Multi-part follow-up posts (2/3, 3/3...): {int(df['is_followup_part'].sum()):,}",
+        "",
+        "## Message types",
+        "",
+        "| Message type | Posts | Share |",
+        "|---|---:|---:|",
+    ]
+    for name, n in overall.items():
+        lines.append(f"| {name} | {n:,} | {n / len(df) * 100:.1f}% |")
+    lines += [
+        "",
+        "![Message types](charts/message_types.png)",
+        "",
+        "## Posting over time",
+        "",
+        "Only days fully covered by the daily collection are shown. The first run pulled "
+        "each account's latest posts only, so earlier days are incomplete.",
+        "",
+        "![Posts per day](charts/daily_posts.png)",
+        "",
+        "## Hazards in alerts",
+        "",
+        "![Alert hazards](charts/alert_hazards.png)",
+        "",
+        "## Differences between stations",
+        "",
+        "![Station mix](charts/station_mix.png)",
+        "",
+        "Full per-station tables are in the `station_by_type` and `station_by_group_pct` "
+        "sheets of `bluesky_posts_coded.xlsx`.",
+        "",
+    ]
+    with open(SUMMARY_MD, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--recode", action="store_true",
+                        help="recode every post (use after changing the coding rules)")
+    args = parser.parse_args()
+
+    raw = pd.read_excel(INFILE).drop_duplicates(subset="post_id")
+    existing = load_coded_posts(args.recode)
+
+    if len(existing):
+        new_raw = raw[~raw["post_id"].isin(existing["post_id"])]
+        new_coded = add_coding(new_raw) if len(new_raw) else new_raw
+        df = pd.concat([existing, new_coded], ignore_index=True)
+        print(f"{len(existing):,} posts already coded, {len(new_raw):,} new posts coded now")
+    else:
+        df = add_coding(raw)
+        print(f"Coded all {len(df):,} posts")
+
+    # ---- summary tables (always rebuilt from the full coded data) ----------
+    overall = df["message_type"].value_counts().rename("posts").to_frame()
+    overall["percent"] = (overall["posts"] / len(df) * 100).round(1)
+    by_type = pd.crosstab(df["station"], df["message_type"])
+    by_type["total"] = by_type.sum(axis=1)
+    by_group_pct = (pd.crosstab(df["station"], df["broad_group"], normalize="index") * 100).round(1)
+    type_by_hazard = pd.crosstab(df["message_type"], df["hazard_type"].fillna("").replace("", "(n/a)"))
+
+    with pd.ExcelWriter(OUTFILE, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="coded_posts", index=False)
+        overall.to_excel(writer, sheet_name="overall_types")
+        by_type.to_excel(writer, sheet_name="station_by_type")
+        by_group_pct.to_excel(writer, sheet_name="station_by_group_pct")
+        type_by_hazard.to_excel(writer, sheet_name="type_by_hazard")
+        for ws in writer.book.worksheets:
+            ws.freeze_panes = "B2"
+            for col in ws.columns:
+                width = max(len(str(c.value)) if c.value is not None else 0 for c in col[:200])
+                ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 40)
+
+    df["hazard_type"] = df["hazard_type"].fillna("")
+    make_charts(df)
+    write_summary_md(df)
+
+    print(overall)
+    uncoded = (df["message_type"] == "Other / uncoded").sum()
+    print(f"\nSaved {OUTFILE}, {SUMMARY_MD} and charts/ ({uncoded} posts uncoded)")
+
+
+if __name__ == "__main__":
+    main()

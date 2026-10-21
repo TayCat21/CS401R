@@ -1,0 +1,51 @@
+# Save this file in your repo as:  .github/workflows/update-summary.yml
+#
+# Whenever bluesky_posts.xlsx is pushed, this codes the new posts and commits the
+# refreshed bluesky_posts_coded.xlsx, SUMMARY.md and charts/ back to the repo.
+
+name: Update coding summary
+
+on:
+  push:
+    paths:
+      - "bluesky_posts.xlsx"   # change if the file lives in a subfolder, e.g. "data/bluesky_posts.xlsx"
+  workflow_dispatch:           # adds a manual "Run workflow" button in the Actions tab
+
+permissions:
+  contents: write              # lets the workflow commit the results
+
+concurrency:
+  group: update-summary        # if two pushes arrive close together, run one after the other
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .   # change to your subfolder if code_posts.py is not in the repo root
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas openpyxl matplotlib
+
+      - name: Code new posts and rebuild summary
+        run: python code_posts.py
+
+      - name: Commit updated results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bluesky_posts_coded.xlsx SUMMARY.md charts/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update coded posts and summary"
+            git pull --rebase
+            git push
+          fi

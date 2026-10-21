@@ -1,7 +1,7 @@
 # Save this file in your repo as:  .github/workflows/update-summary.yml
 #
 # Whenever bluesky_posts.xlsx is pushed, this codes the new posts and commits the
-# refreshed bluesky_posts_coded.xlsx, SUMMARY.md and charts/ back to the repo.
+# refreshed bluesky_posts_coded.xlsx, README.md summary and charts/ back to the repo.
 
 name: Update coding summary
 
@@ -41,7 +41,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add bluesky_posts_coded.xlsx SUMMARY.md charts/
+          git add bluesky_posts_coded.xlsx README.md charts/
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else

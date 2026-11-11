@@ -1,0 +1,84 @@
+Official CSV: 122 WFO rows, 122 unique call signs, 47 states/territories
+Bluesky: 122 handles, 122 profiles (snapshot 2026-10-14), 68,631 unique posts from 122 accounts, 2026-09-11 to 2026-11-09
+  profiles labelled 'unofficial' in display name: 122/122
+  latest first-collected post across accounts: 2026-09-29 15:26 UTC
+
+TABLE 1 - platform presence & audience
+                Platform  WFOs with account  % of 122 WFOs  Total followers   Median     Mean     Min       Max
+                Facebook                122          100.0         14903000 102500.0 122156.0 10000.0 1200000.0
+             X (Twitter)                121           99.2          6552498  31300.0  54153.0   219.0  453200.0
+                 YouTube                103           84.4           155322    772.0   1508.0    31.0   26100.0
+               Instagram                 13           10.7           348447   2774.0  26804.0   846.0  299000.0
+      Bluesky - official                  0            0.0                0      NaN      NaN     NaN       NaN
+Bluesky - unofficial bot                122          100.0           114342    578.0    937.0   195.0    7476.0
+  largest Facebook: GJT (1,200,000)
+  largest X (Twitter): OKX (453,200)
+  largest YouTube: OUN (26,100)
+  largest Instagram: GJT (299,000)
+  largest Bluesky - unofficial bot: SEW (7,476)
+
+WFOs by number of official platforms: 1 platforms: 1, 2 platforms: 15, 3 platforms: 96, 4 platforms: 10
+Platform combinations:
+FB + X + YT         93
+FB + X              15
+FB + X + YT + IG    10
+FB + X + IG          3
+FB                   1
+
+Facebook posts, Sept 14 - Oct 14 (31 days): n=121 WFOs with a count, total=9,925, median=75, mean=82.0, min=2 (HFO), max=302 (MOB); median per day=2.42
+  WFOs missing a post count: ['BUF']
+Bluesky bot posts, Oct 1 - Oct 31 (31 days): total=45,563, median=384, mean=373.5, min=38 (LMK), max=528 (AJK); median per day=12.4
+  multi-part follow-up posts in window: 1,670
+Bluesky bot lifetime posts (profile count, Oct 14): total=2,864,222, median=23648
+Bluesky engagement in Oct window: likes=3,300, reposts=891, replies=23; posts with >=1 like: 6.6%
+
+TABLE 2 - activity
+                                         Measure  WFOs  Total  Median  Mean  Min   Max  Median per day
+ Facebook posts per WFO (Sept 14 - Oct 14, 2026)   121   9925    75.0  82.0  2.0 302.0            2.42
+Bluesky bot posts per WFO (Oct 1 - Oct 31, 2026)   122  45563   384.0 373.5 38.0 528.0           12.39
+
+TABLE 3 - Bluesky bot message types, Oct 1-31
+                                   Posts  Share %
+message_type                                     
+Forecast discussion                15282     33.5
+Climate / records summary          10835     23.8
+Warning / watch / advisory          9671     21.2
+Outlook / situational awareness     3267      7.2
+Alert update or cancellation        2989      6.6
+Statement / short-term forecast     2009      4.4
+Storm report / public information   1487      3.3
+Other / uncoded                       23      0.1
+
+RQ2 (Facebook following): WFOs with visible following lists=120, hidden=2 ['ARX', 'BGM']
+  WFO->WFO follow ties=2187 ; non-WFO NWS/NOAA pages followed (mentions)=67
+  out-degree (WFOs followed): median=7, mean=18.2, min=0, max=119 (GJT); following 0 WFOs: 3
+  in-degree (followed by n WFOs): median=18, mean=17.9, max=29 (LOT); followed by none: 0
+  top 5 most-followed: LOT (29), FWD (26), EAX (25), BYZ (25), LZK (24)
+  check: parsed out-degree equals CSV '# of WFOs this account follows' for 99/120 WFOs (differences are non-WFO pages counted in the CSV or typos)
+  density=0.151 ; reciprocity=710/2143 ties = 33.1% returned
+  homophily: same-region ties=1028/2187 = 47.0% (random-follow expectation 24.5%); same-state=226 = 10.3% (expectation 2.1%)
+
+TABLE 4 - Facebook WFO-following by region
+NWS region  WFOs  WFOs w/ visible list  Ties sent  Mean WFOs followed  % ties to same region  % expected if random
+   Western    24                    24        379                15.8                   52.5                  19.0
+   Central    38                    37        760                20.5                   48.3                  30.6
+  Southern    32                    32        586                18.3                   47.4                  25.6
+   Eastern    23                    22        446                20.3                   39.7                  18.2
+    Alaska     3                     3         10                 3.3                   50.0                   1.7
+   Pacific     2                     2          6                 3.0                   33.3                   0.8
+       All   122                   120       2187                18.2                   47.0                  24.5
+  most-followed non-WFO pages: U.S. National Weather Service (NWS) (11), US National Weather Service Eastern Region HQ (7), US National Weather Service Northeast River Forecast Center (6), US National Weather Service Southeast River Forecast Center (6), US National Weather Service Alaska (4)
+  Bluesky bots: every bot follows exactly 1 account(s) (min 1) - no WFO-to-WFO ties exist on Bluesky
+
+RQ3: WFOs on both Facebook and X: 121; FB > X for 112; median FB/X ratio=3.03
+  Spearman rho (FB vs X followers) = 0.56
+
+TABLE 5 - cross-platform audience (relative to Facebook)
+   Platform  WFOs  Median audience  Median as % of FB (same WFOs)  Spearman rho vs FB
+   Facebook   122           102500                          100.0                1.00
+          X   121            31300                           33.0                0.56
+    YouTube   103              772                            0.6                0.30
+  Instagram    13             2774                            3.7                0.46
+Bluesky bot   122              578                            0.6                0.46
+  Spearman rho (FB followers vs FB posts) = 0.29; (FB posts vs Bluesky bot posts) = 0.16; (FB followers vs Bluesky bot followers) = 0.46
+  WFOs on all of FB, X, YouTube and Instagram: 10 -> ['BYZ', 'EKA', 'FFC', 'GJT', 'LBF', 'LCH', 'LOX', 'PSR', 'RIW', 'VEF']

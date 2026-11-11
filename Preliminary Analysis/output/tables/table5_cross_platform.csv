@@ -1,0 +1,6 @@
+Platform,WFOs,Median audience,Median as % of FB (same WFOs),Spearman rho vs FB
+Facebook,122,102500,100.0,1.0
+X,121,31300,33.0,0.56
+YouTube,103,772,0.6,0.3
+Instagram,13,2774,3.7,0.46
+Bluesky bot,122,578,0.6,0.46
